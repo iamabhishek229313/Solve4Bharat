@@ -1,0 +1,146 @@
+import numba
+import pyttsx3
+import pytesseract 
+import speech_recognition as sr 
+import cv2
+import numpy as np
+
+r = sr.Recognizer()
+
+def heyListen(duration):
+    with sr.Microphone() as source :
+        print("Listening....")
+        audio_data = r.record(source,duration = duration)
+        text = r.recognize_google(audio_data)
+        return text
+
+# Load Yolo
+net = cv2.dnn.readNet("yolov3.weights", "yolov3.cfg")
+classes = []
+with open("coco.names", "r") as f:
+    classes = [line.strip() for line in f.readlines()]
+    layer_names = net.getLayerNames()
+    output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
+    colors = np.random.uniform(0, 255, size=(len(classes), 3))
+
+    # Loading image
+cap = cv2.VideoCapture(0)
+
+language = 'en'
+custom_config = r'--oem 3 --psm 6'
+#pytesseract.image_to_string(img,config = custom_config)
+
+#Speaking Engine .
+engine = pyttsx3.init()
+print(engine.getProperty('rate'))
+engine.setProperty('rate' , 150)
+voices = engine.getProperty('voices')
+engine.setProperty('voice',voices[0].id)
+
+def speakSomething(text):
+    engine.say(text)
+    engine.runAndWait()
+
+def textReader(stringData,frame,words):
+    for i in range (words):
+        (x,y,w,h) = (stringData['left'][i],stringData['top'][i],stringData['width'][i],stringData['height'][i])
+        cv2.rectangle(frame,(x,y),(x+w,y+h),(0,255,0),1)
+        cv2.imshow('Predicted Text',frame)
+    
+    lengthOfData = len(stringData['text'])
+    sentence = ''
+    for i in range(lengthOfData) :
+        sentence = sentence + ' ' + stringData['text'][i]
+    
+    speakSomething(sentence)
+
+def func():
+    prev = ''
+    first = True
+    firstText = True
+    while True:
+        ret, frame = cap.read()
+        cv2.imshow('Camera',frame)
+        stringData = pytesseract.image_to_data(frame,output_type="dict")
+        words = len(stringData['level'])
+        print("Getting  >>> " + str(words))
+        if words > 10 and firstText is True:
+            speakSomething("We are detecting some Text there , do you want to switch on to the textbook mode ?")
+            firstText = False
+            res = heyListen(3)
+            print("The given response is  >> > - - -- - " + res)
+            if res == 'yes':
+                # Detecting the Text
+                textReader(stringData,frame,words)
+                firstText = True
+        else :
+            img = frame
+            height, width, channels = img.shape
+
+            # Detecting objects
+            blob = cv2.dnn.blobFromImage(img, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
+
+            net.setInput(blob)
+            outs = net.forward(output_layers)
+
+            # Showing informations on the screen
+            class_ids = []
+            confidences = []
+            boxes = []
+            for out in outs:
+                for detection in out:
+                    scores = detection[5:]
+                    class_id = np.argmax(scores)
+                    confidence = scores[class_id]
+                    if confidence > 0.5:
+                        # Object detected
+                        center_x = int(detection[0] * width)
+                        center_y = int(detection[1] * height)
+                        w = int(detection[2] * width)
+                        h = int(detection[3] * height)
+
+                        # Rectangle coordinates
+                        x = int(center_x - w / 2)
+                        y = int(center_y - h / 2)
+
+                        boxes.append([x, y, w, h])
+                        confidences.append(float(confidence))
+                        class_ids.append(class_id)
+
+            indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
+            font = cv2.FONT_HERSHEY_PLAIN
+            for i in range(len(boxes)):
+                if i in indexes:
+                    x, y, w, h = boxes[i]
+                    label = str(classes[class_ids[i]])
+                    # Giving the real time feedback to the person 
+                
+                    if first is True :
+                        voiceString = 'There is a ' + label + ' in front of you ' 
+                        speakSomething(voiceString)
+                        prev = label
+                        first = False
+                    else :
+                        if label == prev :
+                            print("Same")
+                        else:
+                            voiceString = 'There is a ' + label + ' in front of you ' 
+                            speakSomething(voiceString)
+                            prev = label
+
+
+                    print(label)
+                    color = colors[i]
+                    cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+                    cv2.putText(img, label, (x, y + 30), font, 3, color, 2)
+
+            cv2.imshow("Image", img)
+            c = cv2.waitKey(1)
+            if c == 27:
+                break
+
+func()
+cv2.destroyAllWindows()
+engine.stop()
+cv2.waitKey(0)
+cv2.destroyAllWindows()
